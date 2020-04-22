@@ -52,6 +52,37 @@ inv_s_box = (
     0x17, 0x2B, 0x04, 0x7E, 0xBA, 0x77, 0xD6, 0x26, 0xE1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0C, 0x7D,
 )
 
+def hamming_distance(s1, s2):
+    s1 = int.from_bytes(matrix2bytes(s1), 'big')
+    s2 = int.from_bytes(matrix2bytes(s2), 'big')
+    count, z = 0, s1 ^ s2
+    while z:
+        count += 1
+        z &= z - 1
+    return count
+
+def compare_hex(b1, b2):
+    assert len(b1) == len(b2)
+    return ['^' if x != y else ' ' for x,y in zip(b1, b2)]
+    
+
+def dump_state(label, s):
+    print(label)
+    for i in range(4):
+        print('   ', ', '.join([f'{x:02x}' for x in [s[0][i], s[1][i], s[2][i], s[3][i]]]))
+
+def dump_glitch_state(label, s1, s2):
+    print(label)
+    print(matrix2bytes(s1).hex())
+    print(matrix2bytes(s2).hex())
+    print(''.join(compare_hex(matrix2bytes(s1).hex(), matrix2bytes(s2).hex())))
+
+def single_bit_flip(s):
+    import random
+    i = random.choice(range(4))
+    j = random.choice(range(4))
+    bit = random.choice(range(8))
+    s[i][j] = s[i][j] ^ (1<<bit)
 
 def sub_bytes(s):
     for i in range(4):
@@ -223,29 +254,90 @@ class AES:
         # Group key words in 4x4 byte matrices.
         return [key_columns[4*i : 4*(i+1)] for i in range(len(key_columns) // 4)]
 
-    def encrypt_block(self, plaintext):
+    def encrypt_block(self, plaintext, verbose=False, break_at=None, glitch_at=None, glitch=single_bit_flip):
         """
         Encrypts a single block of 16 byte long plaintext.
         """
         assert len(plaintext) == 16
 
         plain_state = bytes2matrix(plaintext)
+        if verbose:
+            dump_state('input', plain_state)
+        if break_at == 'input':
+            return matrix2bytes(plain_state)
+        if glitch_at == 'input':
+            glitch(plain_state)
 
         add_round_key(plain_state, self._key_matrices[0])
+        if verbose:
+            dump_state('ark0', plain_state)
+        if break_at == 'ark0':
+            return matrix2bytes(plain_state)
+        if glitch_at == 'ark0':
+            glitch(plain_state)
 
         for i in range(1, self.n_rounds):
             sub_bytes(plain_state)
+            if verbose:
+                dump_state(f'sb{i}', plain_state)
+            if break_at == f'sb{i}':
+                return matrix2bytes(plain_state)
+            if glitch_at == f'sb{i}':
+                glitch(plain_state)
+
             shift_rows(plain_state)
+            if verbose:
+                dump_state(f'sr{i}', plain_state)
+            if break_at == f'sr{i}':
+                return matrix2bytes(plain_state)
+            if glitch_at == f'sr{i}':
+                glitch(plain_state)
+
             mix_columns(plain_state)
+            if verbose:
+                dump_state(f'mc{i}', plain_state)
+            if break_at == f'mc{i}':
+                return matrix2bytes(plain_state)
+            if glitch_at == f'mc{i}':
+                glitch(plain_state)
+
             add_round_key(plain_state, self._key_matrices[i])
+            if verbose:
+                dump_state(f'ark{i}', plain_state)
+            if break_at == f'ark{i}':
+                return matrix2bytes(plain_state)
+            if glitch_at == f'ark{i}':
+                glitch(plain_state)
+
 
         sub_bytes(plain_state)
+        if verbose:
+            dump_state(f'sb{i+1}', plain_state)
+        if break_at == f'sb{i+1}':
+            return matrix2bytes(plain_state)
+        if glitch_at == f'sb{i+1}':
+            glitch(plain_state)
+
         shift_rows(plain_state)
+        if verbose:
+            dump_state(f'sr{i+1}', plain_state)
+        if break_at == f'sr{i+1}':
+            return matrix2bytes(plain_state)
+        if glitch_at == f'sr{i+1}':
+            glitch(plain_state)
+
         add_round_key(plain_state, self._key_matrices[-1])
+        if verbose:
+            dump_state(f'ark{i+1}', plain_state)
+        if break_at == f'ark{i+1}':
+            return matrix2bytes(plain_state)
+        if glitch_at == f'ark{i+1}':
+            glitch(plain_state)
+
 
         return matrix2bytes(plain_state)
 
-    def decrypt_block(self, ciphertext):
+    def decrypt_block(self, ciphertext, verbose=False, break_at=None, glitch_at=None, glitch=single_bit_flip):
         """
         Decrypts a single block of 16 byte long ciphertext.
         """
@@ -253,19 +345,192 @@ class AES:
 
         cipher_state = bytes2matrix(ciphertext)
 
+        if verbose:
+            dump_state(f'ark{self.n_rounds}', cipher_state)
+        if break_at == f'ark{self.n_rounds}':
+            return matrix2bytes(cipher_state)
+        if glitch_at == f'ark{self.n_rounds}':
+            glitch(cipher_state)
         add_round_key(cipher_state, self._key_matrices[-1])
+
+        if verbose:
+            dump_state(f'sr{self.n_rounds}', cipher_state)
+        if break_at == f'sr{self.n_rounds}':
+            return matrix2bytes(cipher_state)
+        if glitch_at == f'sr{self.n_rounds}':
+            glitch(cipher_state)
         inv_shift_rows(cipher_state)
+
+        if verbose:
+            dump_state(f'sb{self.n_rounds}', cipher_state)
+        if break_at == f'sb{self.n_rounds}':
+            return matrix2bytes(cipher_state)
+        if glitch_at == f'sb{self.n_rounds}':
+            glitch(cipher_state)
         inv_sub_bytes(cipher_state)
 
         for i in range(self.n_rounds - 1, 0, -1):
+            if verbose:
+                dump_state(f'ark{i}', cipher_state)
+            if break_at == f'ark{i}':
+                return matrix2bytes(cipher_state)
+            if glitch_at == f'ark{i}':
+                glitch(cipher_state)
             add_round_key(cipher_state, self._key_matrices[i])
+
+            if verbose:
+                dump_state(f'mc{i}', cipher_state)
+            if break_at == f'mc{i}':
+                return matrix2bytes(cipher_state)
+            if glitch_at == f'mc{i}':
+                glitch(cipher_state)
             inv_mix_columns(cipher_state)
+
+            if verbose:
+                dump_state(f'sr{i}', cipher_state)
+            if break_at == f'sr{i}':
+                return matrix2bytes(cipher_state)
+            if glitch_at == f'sr{i}':
+                glitch(cipher_state)
             inv_shift_rows(cipher_state)
+
+            if verbose:
+                dump_state(f'sb{i}', cipher_state)
+            if break_at == f'sb{i}':
+                return matrix2bytes(cipher_state)
+            if glitch_at == f'sb{i}':
+                glitch(cipher_state)
             inv_sub_bytes(cipher_state)
 
+        if verbose:
+            dump_state(f'ark{i-1}', cipher_state)
+        if break_at == f'ark{i-1}':
+            return matrix2bytes(cipher_state)
+        if glitch_at == f'ark{i-1}':
+            glitch(cipher_state)
         add_round_key(cipher_state, self._key_matrices[0])
 
         return matrix2bytes(cipher_state)
+
+    def trace_state(self, correcttext, glitchtext, method='encrypt', verbose=False):
+        """
+        Trace back execution until first corrupted state, given correct output and glitched output.
+        """
+        assert len(correcttext) == 16
+        assert len(glitchtext) == 16
+        correct_state = bytes2matrix(correcttext)
+        glitch_state  = bytes2matrix(glitchtext)
+
+        ret = {}
+
+        if method == 'encrypt':
+            pass
+            ret['input'] = hamming_distance(correct_state, glitch_state)
+            if verbose:
+                dump_glitch_state('input', correct_state, glitch_state)
+
+            add_round_key(correct_state, self._key_matrices[0])
+            add_round_key(glitch_state, self._key_matrices[0])
+            ret['ark0'] = hamming_distance(correct_state, glitch_state)
+            if verbose:
+                dump_glitch_state('ark0', correct_state, glitch_state)
+
+            for i in range(1, self.n_rounds):
+                sub_bytes(correct_state)
+                sub_bytes(glitch_state)
+                ret[f'sb{i}'] = hamming_distance(correct_state, glitch_state)
+                if verbose:
+                    dump_glitch_state(f'sb{i}', correct_state, glitch_state)
+
+                shift_rows(correct_state)
+                shift_rows(glitch_state)
+                ret[f'sr{i}'] = hamming_distance(correct_state, glitch_state)
+                if verbose:
+                    dump_glitch_state(f'sr{i}', correct_state, glitch_state)
+
+                mix_columns(correct_state)
+                mix_columns(glitch_state)
+                ret[f'mc{i}'] = hamming_distance(correct_state, glitch_state)
+                if verbose:
+                    dump_glitch_state(f'mc{i}', correct_state, glitch_state)
+
+                add_round_key(correct_state, self._key_matrices[i])
+                add_round_key(glitch_state, self._key_matrices[i])
+                ret[f'ark{i}'] = hamming_distance(correct_state, glitch_state)
+                if verbose:
+                    dump_glitch_state(f'ark{i}', correct_state, glitch_state)
+
+
+            sub_bytes(correct_state)
+            sub_bytes(glitch_state)
+            ret[f'sb{i+1}'] = hamming_distance(correct_state, glitch_state)
+            if verbose:
+                dump_glitch_state(f'sb{i+1}', correct_state, glitch_state)
+
+            shift_rows(correct_state)
+            shift_rows(glitch_state)
+            ret[f'sr{i+1}'] = hamming_distance(correct_state, glitch_state)
+            if verbose:
+                dump_glitch_state(f'sr{i+1}', correct_state, glitch_state)
+
+            add_round_key(correct_state, self._key_matrices[-1])
+            add_round_key(glitch_state, self._key_matrices[-1])
+            ret[f'ark{i+1}'] = hamming_distance(correct_state, glitch_state)
+            if verbose:
+                dump_glitch_state(f'ark{i+1}', correct_state, glitch_state)
+        elif method == 'decrypt':
+            ret[f'ark{self.n_rounds}'] = hamming_distance(correct_state, glitch_state)
+            if verbose:
+                dump_glitch_state(f'ark{self.n_rounds}', correct_state, glitch_state)
+            add_round_key(correct_state, self._key_matrices[-1])
+            add_round_key(glitch_state, self._key_matrices[-1])
+
+            ret[f'sr{self.n_rounds}'] = hamming_distance(correct_state, glitch_state)
+            if verbose:
+                dump_glitch_state(f'sr{self.n_rounds}', correct_state, glitch_state)
+            inv_shift_rows(correct_state)
+            inv_shift_rows(glitch_state)
+
+            ret[f'sb{self.n_rounds}'] = hamming_distance(correct_state, glitch_state)
+            if verbose:
+                dump_glitch_state(f'sb{self.n_rounds}', correct_state, glitch_state)
+            inv_sub_bytes(correct_state)
+            inv_sub_bytes(glitch_state)
+
+            for i in range(self.n_rounds - 1, 0, -1):
+                ret[f'ark{i}'] = hamming_distance(correct_state, glitch_state)
+                if verbose:
+                    dump_glitch_state(f'ark{i}', correct_state, glitch_state)
+                add_round_key(correct_state, self._key_matrices[i])
+                add_round_key(glitch_state, self._key_matrices[i])
+
+                ret[f'mc{i}'] = hamming_distance(correct_state, glitch_state)
+                if verbose:
+                    dump_glitch_state(f'mc{i}', correct_state, glitch_state)
+                inv_mix_columns(correct_state)
+                inv_mix_columns(glitch_state)
+
+                ret[f'sr{i}'] = hamming_distance(correct_state, glitch_state)
+                if verbose:
+                    dump_glitch_state(f'sr{i}', correct_state, glitch_state)
+                inv_shift_rows(correct_state)
+                inv_shift_rows(glitch_state)
+
+                ret[f'sb{i}'] = hamming_distance(correct_state, glitch_state)
+                if verbose:
+                    dump_glitch_state(f'sb{i}', correct_state, glitch_state)
+                inv_sub_bytes(correct_state)
+                inv_sub_bytes(glitch_state)
+
+            ret[f'ark{i-1}'] = hamming_distance(correct_state, glitch_state)
+            if verbose:
+                dump_glitch_state(f'ark{i-1}', correct_state, glitch_state)
+            add_round_key(correct_state, self._key_matrices[0])
+            add_round_key(glitch_state, self._key_matrices[0])
+        else:
+            raise Exception("method must be 'encrypt' or 'decrypt'")
+        
+        return ret
 
     def encrypt_cbc(self, plaintext, iv):
         """
@@ -535,28 +800,97 @@ def benchmark():
 __all__ = [encrypt, decrypt, AES]
 
 if __name__ == '__main__':
-    import sys
-    write = lambda b: sys.stdout.buffer.write(b)
-    read = lambda: sys.stdin.buffer.read()
+    message = b'HeyRiscureChina!'
+    key     = b'\x2B\x7E\x15\x16\x28\xAE\xD2\xA6\xAB\xF7\x15\x88\x09\xCF\x4F\x3C'
+    ciphertext = AES(bytes(key)).encrypt_block(bytes(message))
+    
+    print('check            ', ciphertext == bytes.fromhex('8c953ad92711b311721457ce2639c76f'))
+    print('message          ', message)
+    print('message          ', message.hex())
+    print('key              ', key.hex())
+    print('ciphertext       ', ciphertext.hex())
 
-    if len(sys.argv) < 2:
-        print('Usage: ./aes.py encrypt "key" "message"')
-        print('Running tests...')
-        from tests import *
-        run()
-    elif len(sys.argv) == 2 and sys.argv[1] == 'benchmark':
-        benchmark()
-        exit()
-    elif len(sys.argv) == 3:
-        text = read()
-    elif len(sys.argv) > 3:
-        text = ' '.join(sys.argv[2:])
+    
+    example = 'decrypt'
+    # example = 'encrypt'
+    if example == 'encrypt':
+        # Example if glitching during encrypt
+        expected_sr9 = AES(bytes(key)).encrypt_block(bytes(message), break_at='sr9')
+        glitchtext =   AES(bytes(key)).encrypt_block(bytes(message), verbose=True, glitch_at='sr9')
+        obtained_sr9 = AES(bytes(key)).decrypt_block(bytes(glitchtext), break_at='sr9')
+        
+        print('check2           ', expected_sr9 == AES(bytes(key)).decrypt_block(bytes(ciphertext), break_at='sr9'))
+        print('ciphertext       ', ciphertext.hex())
+        print('glitchtext       ', glitchtext.hex())
+        print('                 ', ''.join(compare_hex(ciphertext.hex(), glitchtext.hex())))
+        print('sr9')
+        print('expected         ', expected_sr9.hex())
+        print('obtained         ', obtained_sr9.hex())
+        print('                 ', ''.join(compare_hex(expected_sr9.hex(), obtained_sr9.hex())))
 
-    if 'encrypt'.startswith(sys.argv[1]):
-        write(encrypt(sys.argv[2], text))
-    elif 'decrypt'.startswith(sys.argv[1]):
-        write(decrypt(sys.argv[2], text))
+        HDs = AES(bytes(key)).trace_state(ciphertext, glitchtext, method='decrypt', verbose=True)
+        HDs = sorted(((v,k) for k,v in HDs.items()), reverse=False)
+
+        lowest_hd = HDs[0][0]
+        for hd in HDs:
+            if hd[0] == lowest_hd:
+                print(hd)
+                expected = AES(bytes(key)).decrypt_block(bytes(ciphertext), break_at=hd[1])
+                obtained = AES(bytes(key)).decrypt_block(bytes(glitchtext), break_at=hd[1])
+                print(f'expected         ', expected.hex())
+                print(f'obtained         ', obtained.hex())
+                print('                 ', ''.join(compare_hex(expected.hex(), obtained.hex())))
+        
+    elif example == 'decrypt':
+        expected_sb2 = AES(bytes(key)).encrypt_block(bytes(message), break_at='sb2')
+        glitchtext =   AES(bytes(key)).decrypt_block(bytes(ciphertext), verbose=False, glitch_at='sb2')
+        obtained_sb2 = AES(bytes(key)).encrypt_block(bytes(glitchtext), break_at='sb2')
+        
+        print('check2           ', expected_sb2 == AES(bytes(key)).encrypt_block(bytes(message), break_at='sb2'))
+        print('message          ', message.hex())
+        print('glitchtext       ', glitchtext.hex())
+        print('                 ', ''.join(compare_hex(message.hex(), glitchtext.hex())))
+        print('sb2')
+        print('expected         ', expected_sb2.hex())
+        print('obtained         ', obtained_sb2.hex())
+        print('                 ', ''.join(compare_hex(expected_sb2.hex(), obtained_sb2.hex())))
+
+        HDs = AES(bytes(key)).trace_state(message, glitchtext, method='encrypt', verbose=False)
+        HDs = sorted(((v,k) for k,v in HDs.items()), reverse=False)
+        lowest_hd = HDs[0][0]
+        for hd in HDs:
+            if hd[0] == lowest_hd:
+                print(hd)
+                expected = AES(bytes(key)).encrypt_block(bytes(message), break_at=hd[1])
+                obtained = AES(bytes(key)).encrypt_block(bytes(glitchtext), break_at=hd[1])
+                print(f'expected         ', expected.hex())
+                print(f'obtained         ', obtained.hex())
+                print('                 ', ''.join(compare_hex(expected.hex(), obtained.hex())))
     else:
-        print('Expected command "encrypt" or "decrypt" in first argument.')
+        raise Exception('Unknown example')
 
-    # encrypt('my secret key', b'0' * 1000000) # 1 MB encrypted in 20 seconds.
+#     import sys
+#     write = lambda b: sys.stdout.buffer.write(b)
+#     read = lambda: sys.stdin.buffer.read()
+
+#     if len(sys.argv) < 2:
+#         print('Usage: ./aes.py encrypt "key" "message"')
+#         print('Running tests...')
+#         from tests import *
+#         run()
+#     elif len(sys.argv) == 2 and sys.argv[1] == 'benchmark':
+#         benchmark()
+#         exit()
+#     elif len(sys.argv) == 3:
+#         text = read()
+#     elif len(sys.argv) > 3:
+#         text = ' '.join(sys.argv[2:])
+
+#     if 'encrypt'.startswith(sys.argv[1]):
+#         write(encrypt(sys.argv[2], text))
+#     elif 'decrypt'.startswith(sys.argv[1]):
+#         write(decrypt(sys.argv[2], text))
+#     else:
+#         print('Expected command "encrypt" or "decrypt" in first argument.')
+
+#     # encrypt('my secret key', b'0' * 1000000) # 1 MB encrypted in 20 seconds.
