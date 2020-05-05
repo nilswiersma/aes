@@ -201,6 +201,33 @@ def split_blocks(message, block_size=16):
         assert len(message) % block_size == 0
         return [message[i:i+16] for i in range(0, len(message), block_size)]
 
+def reverse_expand_key(ik10):
+    key_columns = [
+        [None]*4, [None]*4, [None]*4, [None]*4,
+        [None]*4, [None]*4, [None]*4, [None]*4,
+        [None]*4, [None]*4, [None]*4
+    ]
+
+    for idx in range(0,16,4):
+        key_columns[-1][idx//4] = ik10[idx:idx+4]
+
+    for idx in range(-1, -11, -1):
+        for i in range(-1, -4, -1):
+            word = key_columns[idx][i]
+            pword = key_columns[idx][i-1]
+            key_columns[idx-1][i] = xor_bytes(pword, word)
+
+        word = key_columns[idx][-4]
+        pword = key_columns[idx-1][-1]
+        pword = list(pword)
+        pword.append(pword.pop(0))
+        pword = pword
+        pword = [s_box[b] for b in pword]
+        pword[0] ^= r_con[11 + idx]
+        key_columns[idx-1][-4] = xor_bytes(pword, word)
+
+    return [b''.join(key_column) for key_column in key_columns]
+
 
 class AES:
     """
